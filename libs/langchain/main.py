@@ -41,19 +41,29 @@ def do_extract_qa(source: str, source_type: str, destination: str, qa_count_per_
             loader = TextLoader(app.config['SOURCE_BASE_PATH'] + source)
 
         documents = loader.load()
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=50)
+        text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
         texts = text_splitter.split_documents(documents)
 
         llm = SageGPTChatOpenAI(
             openai_api_base=app.config['SAGE_GPT_SERVICE_ADDRESS']
         )
-        templ = "你必须从给定的文本中抽取出" + str(qa_count_per_trunk) + \
-                "组QA对，输出的结果格式如下：\n\n\n" \
-                "[\n  {{\n    \"question\": \"在这里插入问题1\", \n    \"answer\": \"在这里插入问题1对应的答案\"\n  }},\n" \
-                "  {{\n    \"question\": \"在这里插入问题N\",\n    \"answer\": \"在这里插入问题N对应的答案\"\n  }}\n]\n\n\n" \
-                "务必确保输出的结果是一个有效的JSON格式，不要输出任何与QA对无关的信息。\n\n" \
-                "按照上面的要求，从下列文本中抽取出" + str(qa_count_per_trunk) + "组QA对：\n\n\n" \
-                                                                "{text}"
+        templ = f"你必须从给定文本中抽取出{qa_count_per_trunk}" + """组QA对，输出的结果格式如下：
+[
+  {{
+    "question": "在这里插入问题1", 
+    "answer": "在这里插入问题1对应的答案"
+  }},
+  {{
+    "question": "在这里插入问题N",
+    "answer": "在这里插入问题N对应的答案"
+  }}
+]
+输出的结果必须是一个有效的JSON结构，不要输出任何与QA对无关的信息。
+
+给定文本：
+{text}
+QA对为：
+"""
         chain = SageGPTQAGenerationChain.from_llm(llm=llm, prompt=PromptTemplate.from_template(templ))
 
         i = 1
