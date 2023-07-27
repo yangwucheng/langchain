@@ -47,9 +47,13 @@ def do_extract_qa(source: str, source_type: str, destination: str, qa_count_per_
         llm = SageGPTChatOpenAI(
             openai_api_base=app.config['SAGE_GPT_SERVICE_ADDRESS']
         )
-        templ = f"请根据下面的文本片段生成{qa_count_per_trunk}组QA对，" \
-                f"{qa_count_per_trunk}组QA对组成一个JSON列表，每组QA对是一个JSON字典:\n" \
-                + "{text}"
+        templ = "你必须从给定的文本中抽取出" + str(qa_count_per_trunk) + \
+                "组QA对，输出的结果格式如下：\n\n\n" \
+                "[\n  {{\n    \"question\": \"在这里插入问题1\", \n    \"answer\": \"在这里插入问题1对应的答案\"\n  }},\n" \
+                "  {{\n    \"question\": \"在这里插入问题N\",\n    \"answer\": \"在这里插入问题N对应的答案\"\n  }}\n]\n\n\n" \
+                "务必确保输出的结果是一个有效的JSON格式，不要输出任何与QA对无关的信息。\n\n" \
+                "按照上面的要求，从下列文本中抽取出" + str(qa_count_per_trunk) + "组QA对：\n\n\n" \
+                                                                "{text}"
         chain = SageGPTQAGenerationChain.from_llm(llm=llm, prompt=PromptTemplate.from_template(templ))
 
         i = 1
@@ -57,7 +61,7 @@ def do_extract_qa(source: str, source_type: str, destination: str, qa_count_per_
             try:
                 logging.info(f"start extract qa from {source} chunk {i}")
                 with open(app.config['DESTINATION_BASE_PATH'] + destination, 'a') as f:
-                    f.write(chain.run({"text": a_text}))
+                    f.write(chain.run({"text": a_text}) + "\n")
                 logging.info(f"finish extract qa from {source} chunk {i}")
             except Exception as e:
                 logging.error(f"finish extract qa from {source} chunk {i} failed: ", e)

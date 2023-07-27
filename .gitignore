@@ -171,5 +171,5 @@ docs/docs_skeleton/build
 docs/docs_skeleton/node_modules
 docs/docs_skeleton/yarn.lock
 
-libs/langchain/source-docs
-libs/langchain/destination-docs
+libs/source-docs
+libs/destination-docs
