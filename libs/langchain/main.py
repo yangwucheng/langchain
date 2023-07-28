@@ -73,7 +73,7 @@ def do_extract_qa(a_task: TaskModel):
 
 给定文本：
 {text}
-QA对为：
+结果为：
 """
         chain = SageGPTQAGenerationChain.from_llm(llm=llm, prompt=PromptTemplate.from_template(templ))
         i = 1
