@@ -14,8 +14,8 @@ class TaskModel(Model):
     total_chunk = IntegerField(null=True)
     success_chunk = IntegerField(default=0)
     failed_chunk = IntegerField(default=0)
-    # 已提交、运行中、完成（全部成功抽取）、完成（部分抽取失败）
-    status = CharField(max_length=50, default="已提交")
+    # Submitted, Running, Finished(completely success), Finished(partial failed), Failed
+    status = CharField(max_length=50, default="Submitted")
 
     class Meta:
         database = None

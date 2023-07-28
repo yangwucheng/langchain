@@ -37,8 +37,8 @@ def init_log():
 
 def do_extract_qa(a_task: TaskModel):
     try:
-        logging.info(f"任务{a_task.id}运行中")
-        a_task.status = "运行中"
+        logging.info(f"Task {a_task.id} running")
+        a_task.status = "Running"
         a_task.save()
 
         if a_task.source_type == "pdf":
@@ -53,7 +53,7 @@ def do_extract_qa(a_task: TaskModel):
         texts = text_splitter.split_documents(documents)
         a_task.total_chunk = len(texts)
         a_task.save()
-        logging.info(f"任务{a_task.id}一共有{a_task.total_chunk}个文本块需要抽取")
+        logging.info(f"Task {a_task.id} total chunks: {a_task.total_chunk}")
 
         llm = SageGPTChatOpenAI(
             openai_api_base=app.config['SAGE_GPT_SERVICE_ADDRESS']
@@ -81,12 +81,20 @@ QA对为：
         for a_text in texts:
             try:
                 logging.info(f"start extract qa from {a_task.id}:{a_task.source} chunk {i}")
-                with open(app.config['DESTINATION_BASE_PATH'] + a_task.destination, 'a') as f:
-                    f.write(chain.run({"text": a_text}) + "\n")
-                logging.info(f"finish extract qa from {a_task.id}:{a_task.source} chunk {i}")
-                a_task: TaskModel = TaskModel.get_by_id(a_task.id)
-                a_task.success_chunk += 1
-                a_task.save()
+                qa, error_count = chain.run({"text": a_text})
+                if qa:
+                    with open(app.config['DESTINATION_BASE_PATH'] + a_task.destination, 'a') as f:
+                        f.write(qa + "\n")
+                logging.info(f"finish extract qa from {a_task.id}:{a_task.source} chunk {i}, qa result: {qa}")
+                if error_count == 0:
+                    a_task: TaskModel = TaskModel.get_by_id(a_task.id)
+                    a_task.success_chunk += 1
+                    a_task.save()
+                else:
+                    a_task: TaskModel = TaskModel.get_by_id(a_task.id)
+                    a_task.failed_chunk += 1
+                    a_task.save()
+                    has_error = True
             except Exception as e:
                 logging.error(f"finish extract qa from {a_task.id}:{a_task.source} chunk {i} failed: ", e)
                 a_task: TaskModel = TaskModel.get_by_id(a_task.id)
@@ -96,13 +104,19 @@ QA对为：
             i += 1
         a_task: TaskModel = TaskModel.get_by_id(a_task.id)
         if has_error:
-            a_task.status = "完成（部分抽取失败）"
+            a_task.status = "Finished(partial failed)"
         else:
-            a_task.status = "完成（全部成功抽取）"
+            a_task.status = "Finished(completely success)"
         a_task.save()
     except Exception as e:
-        logging.info(f"任务{a_task.id}运行失败")
+        logging.info(f"Task {a_task.id} failed")
         logging.error("do_extract_qa failed: ", e)
+        try:
+            a_task: TaskModel = TaskModel.get_by_id(a_task.id)
+            a_task.status = "Failed"
+            a_task.save()
+        except Exception as e1:
+            logging.error("save db failed: ", e1)
 
 
 @qa_bp.route('/api/v1/qa', methods=['POST'])
@@ -119,12 +133,12 @@ def extract_qa():
         chunk_size=500,
         chunk_overlap=50
     )
-    logging.info(f"任务{a_task.id}已提交")
+    logging.info(f"Task {a_task.id} submitted")
     executor.submit(do_extract_qa, a_task)
 
     return Response(json.dumps({
         "code": 0,
-        "message": f"QA抽取任务提交成功，任务编号为{a_task.id}"
+        "message": f"QA task submitted，task id is {a_task.id}"
     }), content_type='application/json')
 
 
@@ -136,16 +150,16 @@ def get_status(task_id: int):
         a_task = TaskModel.get_by_id(task_id)
         return Response(json.dumps({
             "code": 0,
-            "message": f"任务{task_id}{a_task.status}，"
-                       f"总共{a_task.total_chunk}文本块需要抽取，"
-                       f"已经成功抽取{a_task.success_chunk}个文本块，"
-                       f"{a_task.failed_chunk}个文本块抽取失败"
+            "message": f"Task {task_id} {a_task.status}, "
+                       f"total chunks: {a_task.total_chunk}, "
+                       f"success chunks: {a_task.success_chunk}, "
+                       f"failed chunks: {a_task.failed_chunk}"
         }), content_type='application/json')
     except Exception as e:
         logging.error(f"get task {task_id} status failed: ", e)
         return Response(json.dumps({
             "code": 1,
-            "message": f"获取任务状态失败，请确认任务编号是否正确"
+            "message": f"get status failed, please make sure task id is correct."
         }), content_type='application/json')
 
 

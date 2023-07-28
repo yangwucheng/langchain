@@ -12,6 +12,8 @@ from langchain.schema import Document
 
 
 class SageGPTQAGenerationChain(QAGenerationChain):
+    error_count_key: str = "error_count"
+
     async def _acall(self, inputs: Dict[str, Any], run_manager: Optional[AsyncCallbackManagerForChainRun] = None) -> \
             Dict[str, Any]:
         pass
@@ -103,19 +105,24 @@ class SageGPTQAGenerationChain(QAGenerationChain):
         text = re.sub(r"QA对(?P<index>\d+\.)", self.get_matched_index, text, flags=re.MULTILINE | re.S)
         chain = LLMChain(llm=self.llm_chain.llm, prompt=PromptTemplate.from_template(templ))
         result = ''
+        error_count = 0
         for a_text in self.split_text(text.strip()):
-            logging.info(f"fix json text piece: {a_text}")
+            logging.info(f"to be fixed json text piece: {a_text}")
             try:
-                valid_json_list_str = self.get_json_list_str(chain.run(a_text))
+                fixed_text = chain.run(a_text)
+                logging.info(f"fixed json text piece: {fixed_text}")
+                valid_json_list_str = self.get_json_list_str(fixed_text)
                 if valid_json_list_str:
                     logging.info(f"fixed valid json list str: {valid_json_list_str}")
                     result += valid_json_list_str + "\n"
                 else:
-                    logging.info(f"invalid json list str after llm fix")
+                    logging.error(f"invalid json list str after llm fix")
+                    error_count += 1
             except Exception as e:
                 logging.error(f"fix json text piece: {a_text} failed", e)
+                error_count += 1
 
-        return result
+        return result, error_count
 
     def _call(
             self,
@@ -133,11 +140,12 @@ class SageGPTQAGenerationChain(QAGenerationChain):
         )
         logging.info(f"results from llm {results}")
         qa = ''
+        error_count = 0
         for res in results.generations:
             qa = self.get_json_list_str(res[0].text)
             if qa:
                 break
-            qa = self.fix_json_error(res[0].text)
+            qa, error_count = self.fix_json_error(res[0].text)
             break
 
-        return {self.output_key: qa}
+        return {self.output_key: [qa, error_count]}
