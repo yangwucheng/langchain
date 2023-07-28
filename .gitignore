@@ -173,3 +173,4 @@ docs/docs_skeleton/yarn.lock
 
 libs/source-docs
 libs/destination-docs
+libs/db

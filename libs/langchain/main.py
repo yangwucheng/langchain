@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+from peewee import SqliteDatabase
 from concurrent.futures import ThreadPoolExecutor
 from logging.handlers import RotatingFileHandler
 
@@ -12,10 +14,12 @@ from langchain.chains.qa_generation.sagegpt_qa import SageGPTQAGenerationChain
 from langchain.chat_models.sagegpt_openai import SageGPTChatOpenAI
 from langchain.document_loaders import PyMuPDFLoader, UnstructuredHTMLLoader, TextLoader
 from langchain.text_splitter import CharacterTextSplitter
+from task_model import TaskModel
 
 executor = ThreadPoolExecutor(2)
 app = Flask(__name__)
 qa_bp = Blueprint('qa', __name__)
+current_dir = os.path.dirname(__file__)
 
 
 def init_log():
@@ -31,23 +35,30 @@ def init_log():
                         ])
 
 
-def do_extract_qa(source: str, source_type: str, destination: str, qa_count_per_trunk: int):
+def do_extract_qa(a_task: TaskModel):
     try:
-        if source_type.lower() == "pdf":
-            loader = PyMuPDFLoader(app.config['SOURCE_BASE_PATH'] + source)
-        elif source_type.lower() == "html":
-            loader = UnstructuredHTMLLoader(app.config['SOURCE_BASE_PATH'] + source)
+        logging.info(f"任务{a_task.id}运行中")
+        a_task.status = "运行中"
+        a_task.save()
+
+        if a_task.source_type == "pdf":
+            loader = PyMuPDFLoader(app.config['SOURCE_BASE_PATH'] + a_task.source)
+        elif a_task.source_type.lower() == "html":
+            loader = UnstructuredHTMLLoader(app.config['SOURCE_BASE_PATH'] + a_task.source)
         else:
-            loader = TextLoader(app.config['SOURCE_BASE_PATH'] + source)
+            loader = TextLoader(app.config['SOURCE_BASE_PATH'] + a_task.source)
 
         documents = loader.load()
-        text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        text_splitter = CharacterTextSplitter(chunk_size=a_task.chunk_size, chunk_overlap=a_task.chunk_overlap)
         texts = text_splitter.split_documents(documents)
+        a_task.total_chunk = len(texts)
+        a_task.save()
+        logging.info(f"任务{a_task.id}一共有{a_task.total_chunk}个文本块需要抽取")
 
         llm = SageGPTChatOpenAI(
             openai_api_base=app.config['SAGE_GPT_SERVICE_ADDRESS']
         )
-        templ = f"你必须从给定文本中抽取出{qa_count_per_trunk}" + """组QA对，输出的结果格式如下：
+        templ = f"你必须从给定文本中抽取出{a_task.qa_count_per_chunk}" + """组QA对，输出的结果格式如下：
 [
   {{
     "question": "在这里插入问题1", 
@@ -65,18 +76,32 @@ def do_extract_qa(source: str, source_type: str, destination: str, qa_count_per_
 QA对为：
 """
         chain = SageGPTQAGenerationChain.from_llm(llm=llm, prompt=PromptTemplate.from_template(templ))
-
         i = 1
+        has_error = False
         for a_text in texts:
             try:
-                logging.info(f"start extract qa from {source} chunk {i}")
-                with open(app.config['DESTINATION_BASE_PATH'] + destination, 'a') as f:
+                logging.info(f"start extract qa from {a_task.id}:{a_task.source} chunk {i}")
+                with open(app.config['DESTINATION_BASE_PATH'] + a_task.destination, 'a') as f:
                     f.write(chain.run({"text": a_text}) + "\n")
-                logging.info(f"finish extract qa from {source} chunk {i}")
+                logging.info(f"finish extract qa from {a_task.id}:{a_task.source} chunk {i}")
+                a_task: TaskModel = TaskModel.get_by_id(a_task.id)
+                a_task.success_chunk += 1
+                a_task.save()
             except Exception as e:
-                logging.error(f"finish extract qa from {source} chunk {i} failed: ", e)
+                logging.error(f"finish extract qa from {a_task.id}:{a_task.source} chunk {i} failed: ", e)
+                a_task: TaskModel = TaskModel.get_by_id(a_task.id)
+                a_task.failed_chunk += 1
+                a_task.save()
+                has_error = True
             i += 1
+        a_task: TaskModel = TaskModel.get_by_id(a_task.id)
+        if has_error:
+            a_task.status = "完成（部分抽取失败）"
+        else:
+            a_task.status = "完成（全部成功抽取）"
+        a_task.save()
     except Exception as e:
+        logging.info(f"任务{a_task.id}运行失败")
         logging.error("do_extract_qa failed: ", e)
 
 
@@ -86,16 +111,51 @@ def extract_qa():
     logging.info(
         f'user post data: {json.dumps(post_data, ensure_ascii=False)}')
 
-    source = post_data['source']
-    source_type: str = post_data['source_type']
-    destination = post_data.get('destination', source + ".json")
-    qa_count_per_trunk = post_data.get('qa_count_per_trunk', 5)
-    executor.submit(do_extract_qa, source, source_type, destination, qa_count_per_trunk)
+    a_task = TaskModel.create(
+        source=post_data['source'],
+        source_type=post_data['source_type'].lower(),
+        destination=post_data.get('destination', post_data['source'] + ".json"),
+        qa_count_per_chunk=post_data.get('qa_count_per_chunk', 5),
+        chunk_size=500,
+        chunk_overlap=50
+    )
+    logging.info(f"任务{a_task.id}已提交")
+    executor.submit(do_extract_qa, a_task)
 
     return Response(json.dumps({
         "code": 0,
-        "message": "QA抽取任务提交成功"
+        "message": f"QA抽取任务提交成功，任务编号为{a_task.id}"
     }), content_type='application/json')
+
+
+@qa_bp.route('/api/v1/status/<task_id>', methods=['GET'])
+def get_status(task_id: int):
+    logging.info(f'get task {task_id} status')
+
+    try:
+        a_task = TaskModel.get_by_id(task_id)
+        return Response(json.dumps({
+            "code": 0,
+            "message": f"任务{task_id}{a_task.status}，"
+                       f"总共{a_task.total_chunk}文本块需要抽取，"
+                       f"已经成功抽取{a_task.success_chunk}个文本块，"
+                       f"{a_task.failed_chunk}个文本块抽取失败"
+        }), content_type='application/json')
+    except Exception as e:
+        logging.error(f"get task {task_id} status failed: ", e)
+        return Response(json.dumps({
+            "code": 1,
+            "message": f"获取任务状态失败，请确认任务编号是否正确"
+        }), content_type='application/json')
+
+
+def init_database():
+    db_file_path = os.path.join(current_dir, '../db/aigq.db')
+    app.db = SqliteDatabase(db_file_path, pragmas={'journal_mode': 'wal'})
+
+    TaskModel._meta.database = app.db
+    if not TaskModel.table_exists():
+        TaskModel.create_table()
 
 
 def init_config():
@@ -109,6 +169,7 @@ def create_app():
     with app.app_context():
         init_config()
     init_log()
+    init_database()
     return app
 
 

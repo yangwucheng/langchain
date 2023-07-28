@@ -32,10 +32,9 @@ RUN $POETRY_HOME/bin/pip install -i https://mirrors.cloud.tencent.com/pypi/simpl
 RUN $POETRY_HOME/bin/pip install -i https://mirrors.cloud.tencent.com/pypi/simple mypy_extensions==1.0.0
 RUN $POETRY_HOME/bin/pip install -i https://mirrors.cloud.tencent.com/pypi/simple openai==0.27.8
 RUN $POETRY_HOME/bin/pip install -i https://mirrors.cloud.tencent.com/pypi/simple lxml==4.9.2
+RUN $POETRY_HOME/bin/pip install -i https://mirrors.cloud.tencent.com/pypi/simple peewee==3.16.2
 
 RUN mkdir ./source-docs && mkdir ./destination-docs
-
-COPY langchain ./langchain
 
 #CMD ["/bin/bash","-c","cd /app && /opt/poetry/bin/python main.py"]
 CMD ["/bin/bash","-c","cd /app && tail -f /dev/null"]
